@@ -8,32 +8,34 @@
 
 namespace fs = boost::filesystem;
 
-const char* const kNsisPackageUninstallerPath = "NSISPACKAGEUNINSTALLERPATH";
+const char* const kNsisPackageUninstallerPath = "NSISPACKAGEUNINSTALLER";
 
-extern "C" _declspec(dllexport) UINT __stdcall uninstallNsisPackage (MSIHANDLE);
+extern "C" __declspec(dllexport) UINT __stdcall uninstallNsisPackage (MSIHANDLE);
 
-extern "C" UINT __stdcall uninstallNsisPackage (MSIHANDLE handle) {
+extern "C" __declspec(dllexport) UINT __stdcall uninstallNsisPackage (MSIHANDLE handle) {
     auto session = util::windows::msi::Session{handle};
     try {
         session.log("uninstallNsisPackage");
 
         auto uninstaller = fs::path{session.getProperty(kNsisPackageUninstallerPath)};
         auto tmpUninstaller = fs::unique_path("nsis-uninstaller-%%%%-%%%%-%%%%-%%%%.exe");
-        session.log(std::string("Copying ") + uninstaller + " -> " + tmpUninstaller);
+        session.log(std::string("Copying ") + uninstaller.string() + " -> " + tmpUninstaller.string());
         fs::copy_file(uninstaller, tmpUninstaller);
         std::shared_ptr<void> guard { nullptr, [&] (void*) {
             boost::system::error_code ec;
             (void)fs::remove(tmpUninstaller, ec);
-            session.log(std::string("Deleted ") + tmpUninstaller + ": " + ec.message());
+            session.log(std::string("Deleted ") + tmpUninstaller.string() + ": " + ec.message());
         }};
 
         using namespace boost::process;
         using namespace boost::process::initializers;
 
-        auto packagePath = uninstaller.parent_path();
+        auto args = std::vector<std::string>{
+            std::string("_?=") + uninstaller.parent_path().string()
+        };
         auto child = execute(
             run_exe(tmpUninstaller),
-            set_args({std::string("_?=") + packagePath})
+            set_args(args)
         );
 
         if (wait_for_exit(child)) {

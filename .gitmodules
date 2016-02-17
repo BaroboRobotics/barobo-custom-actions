@@ -1,3 +1,6 @@
 [submodule "boost-process"]
 	path = boost-process
 	url = git@github.com:BorisSchaeling/boost-process.git
+[submodule "cxx-util"]
+	path = cxx-util
+	url = git@github.com:BaroboRobotics/cxx-util.git
