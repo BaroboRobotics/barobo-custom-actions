@@ -10,7 +10,7 @@ find_package(Boost 1.59.0 REQUIRED COMPONENTS system filesystem)
 
 add_subdirectory(cxx-util)
 
-set(sources src/uninstallnsispackage.cpp)
+set(sources src/customactions.cpp)
 
 add_library(barobo-custom-actions MODULE ${sources})
 target_include_directories(barobo-custom-actions PRIVATE ${Boost_INCLUDE_DIRS} boost-process)
