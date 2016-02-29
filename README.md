@@ -1,4 +1,2 @@
-This repository contains an alternate WIX generator template for CPack, and a
-custom action module useful for creating MSI files for Barobo software.
-
-It's a work in progress, yo.
+This repository contains a custom action module to help install Barobo software from MSI files using
+WIX.
