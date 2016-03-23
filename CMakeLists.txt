@@ -17,3 +17,5 @@ target_include_directories(barobo-custom-actions PRIVATE ${Boost_INCLUDE_DIRS} b
 target_link_libraries(barobo-custom-actions PRIVATE cxx-util ${Boost_LIBRARIES})
 
 set_target_properties(barobo-custom-actions PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED ON)
+
+install(TARGETS barobo-custom-actions DESTINATION .)
