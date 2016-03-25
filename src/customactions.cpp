@@ -1,3 +1,5 @@
+#include "copydirectory.hpp"
+
 #include <util/windows/msi.hpp>
 
 #include <boost/filesystem.hpp>
@@ -6,8 +8,36 @@
 #include <memory>
 #include <string>
 
+#include <cstdint>
+
 namespace fs = boost::filesystem;
 namespace msi = util::windows::msi;
+
+int runGuiProgram (const std::string& program, const std::string& args) {
+    // Uninstallers are typically GUI programs, which means we need to do
+    // something like:
+    //   cmd.exe /c "start \"\" /b /wait \"c:\\temp\\nsis-uninstaller.exe\" _?=C:\\Program Files\\BaroboLink"
+    // Life is hard sometimes.
+    auto cmdArgs = std::vector<std::string>{
+        "/c", // change to /k to leave the cmd.exe open, useful for debugging
+        std::string("start \"\" /b /wait \"") + program + "\" " + args
+    };
+    auto cmdExe = std::string("C:\\Windows\\System32\\cmd.exe");
+
+    using namespace boost::process;
+    using namespace boost::process::initializers;
+    auto child = execute(
+        run_exe(cmdExe),
+        set_args(cmdArgs),
+        // show_window(SW_HIDE) seems to refer to the calling process' window, not the child's
+        on_CreateProcess_setup([](executor& e) {
+            e.creation_flags |= CREATE_NO_WINDOW;
+        }),
+        throw_on_error()
+    );
+
+    return wait_for_exit(child);
+}
 
 UINT uninstallNsisPackage (msi::Session& session, fs::path uninstaller) {
     auto tmpUninstaller = fs::temp_directory_path();
@@ -32,34 +62,9 @@ UINT uninstallNsisPackage (msi::Session& session, fs::path uninstaller) {
         session.log(std::string("Deleted ") + tmpUninstaller.string() + ": " + ec.message());
     }};
 
-    using namespace boost::process;
-    using namespace boost::process::initializers;
-
-    // The uninstaller is a GUI program, which means we need to do
-    // something like:
-    //   cmd.exe /c "start \"\" /b /wait \"c:\\temp\\nsis-uninstaller.exe\" _?=C:\\Program Files\\BaroboLink"
-    // Life is hard sometimes.
-    auto args = std::vector<std::string>{
-        "/c", // change to /k to leave the cmd.exe open, useful for debugging
-        std::string("start \"\" /b /wait \"") + tmpUninstaller.string() + "\" "
-            + std::string("_?=") + instDir.string()
-    };
-    auto cmdExe = std::string("C:\\Windows\\System32\\cmd.exe");
-    session.log(std::string("Executing ") + cmdExe + " " + args[0] + " " + args[1]);
-    auto child = execute(
-        run_exe(cmdExe),
-        set_args(args),
-        // show_window(SW_HIDE) seems to refer to the calling process' window
-        on_CreateProcess_setup([](executor& e) {
-            e.creation_flags |= CREATE_NO_WINDOW;
-        }),
-        throw_on_error()
-    );
-
-    if (wait_for_exit(child)) {
+    if (runGuiProgram(tmpUninstaller.string(), std::string("_?=") + instDir.string())) {
         return ERROR_INSTALL_FAILURE;
     }
-
     return ERROR_SUCCESS;
 }
 
@@ -105,23 +110,70 @@ extern "C" __declspec(dllexport) UINT __stdcall uninstallOldLinkbotLabs (MSIHAND
     }
 }
 
-const char* const kLinkbotDotHPath = "CustomActionData";
+const char* const kSourceDestinationPathPair = "CustomActionData";
 
-#pragma comment(linker, "/EXPORT:copyLinkbotDotH=_copyLinkbotDotH@4")
-extern "C" __declspec(dllexport) UINT __stdcall copyLinkbotDotH (MSIHANDLE handle) {
+#pragma comment(linker, "/EXPORT:copyChBinding=_copyChBinding@4")
+extern "C" __declspec(dllexport) UINT __stdcall copyChBinding (MSIHANDLE handle) {
     auto session = msi::Session{handle};
     try {
-        session.log("copyLinkbotDotH");
+        session.log("copyChBinding");
 
-        auto from = fs::path{session.getProperty(kLinkbotDotHPath)};
-        auto to = from.parent_path() // Ch/package/chbarobo/include
-                      .parent_path() // Ch/package/chbarobo
-                      .parent_path() // Ch/package
-                      .parent_path() // Ch
-                      / "toolkit"    // Ch/toolkit
-                      / "include"    // Ch/toolkit/include
-                      / from.filename();
-        fs::copy_file(from, to, fs::copy_option::overwrite_if_exists);
+        // Our source;destination pair will be something like this:
+        //   C:/Program Files (x86)/Linkbot Labs/chbarobo/win64/chbarobo/;C:/Ch
+        auto srcDestPair = session.getProperty(kSourceDestinationPathPair);
+        auto semicolon = srcDestPair.find(';');
+        // chbarobo is provided with a trailing slash, so we actually want its parent
+        auto chbaroboPath = fs::path(srcDestPair.substr(0, semicolon)).parent_path();
+        auto chPath = fs::path(srcDestPair.substr(semicolon + 1));
+
+        session.log(std::string("Installing ") + chbaroboPath.string() + " to " + chPath.string());
+
+        fs::remove_all(chPath / "package" / chbaroboPath.filename());
+        copyDirectory(chbaroboPath, chPath / "package" / chbaroboPath.filename());
+        fs::copy_file(chbaroboPath / "include" / "linkbot.h",
+                chPath / "toolkit" / "include" / "linkbot.h",
+                fs::copy_option::overwrite_if_exists);
+
+        return ERROR_SUCCESS;
+    }
+    catch (std::exception& e) {
+        session.messageBoxOk(std::string("Exception: ") + e.what());
+        return ERROR_INSTALL_FAILURE;
+    }
+}
+
+// the DPInst command line comes packaged like:
+//   C:\Path\To\Program\Executable.exe;arg0 arg1 arg2
+// Everything before the semicolon should be interpreted as the program to run, everything after,
+// its arguments.
+const char* const kDpinstCommandLine = "CustomActionData";
+static const uint32_t kDpinstErrorFlag = 0x80000000;
+static const uint32_t kDpinstRebootFlag = 0x40000000;
+
+#pragma comment(linker, "/EXPORT:installLinkbotDriver=_installLinkbotDriver@4")
+extern "C" __declspec(dllexport) UINT __stdcall installLinkbotDriver (MSIHANDLE handle) {
+    auto session = msi::Session{handle};
+    try {
+        session.log("installLinkbotDriver");
+        auto cmdline = session.getProperty(kDpinstCommandLine);
+        auto semicolon = cmdline.find(';');
+        // The program is everything up to the semicolon
+        auto program = cmdline.substr(0, semicolon);
+        // The arguments are everything after it, if anything
+        auto args = semicolon != std::string::npos
+                    ? cmdline.substr(semicolon + 1)
+                    : "";
+        session.log(std::string("Running ") + program + " " + args);
+        auto rc = runGuiProgram(program, args);
+        session.log(std::string("DPInst return code: ") + std::to_string(rc));
+        if (rc & kDpinstErrorFlag) {
+            session.messageBoxOk(std::string("DPInst error flag set: ") + std::to_string(rc));
+            return ERROR_INSTALL_FAILURE;
+        }
+        if (rc & kDpinstRebootFlag) {
+            session.messageBoxOk(std::string("DPInst reboot flag set: ") + std::to_string(rc));
+            return ERROR_INSTALL_FAILURE;
+        }
         return ERROR_SUCCESS;
     }
     catch (std::exception& e) {
