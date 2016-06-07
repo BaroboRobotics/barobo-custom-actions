@@ -10,7 +10,7 @@ find_package(Boost 1.59.0 REQUIRED COMPONENTS system filesystem)
 
 add_subdirectory(cxx-util)
 
-set(sources src/customactions.cpp src/copydirectory.cpp)
+set(sources src/customactions.cpp src/copydirectory.cpp src/msi.cpp)
 
 add_library(barobo-custom-actions MODULE ${sources})
 target_include_directories(barobo-custom-actions PRIVATE ${Boost_INCLUDE_DIRS} boost-process)

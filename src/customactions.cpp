@@ -1,6 +1,5 @@
 #include "copydirectory.hpp"
-
-#include <util/windows/msi.hpp>
+#include "msi.hpp"
 
 #include <boost/filesystem.hpp>
 #include <boost/process.hpp>
@@ -11,7 +10,6 @@
 #include <cstdint>
 
 namespace fs = boost::filesystem;
-namespace msi = util::windows::msi;
 
 int runGuiProgram (const std::string& program, const std::string& args) {
     // Uninstallers are typically GUI programs, which means we need to do
